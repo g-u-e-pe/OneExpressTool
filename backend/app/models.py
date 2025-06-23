@@ -1,7 +1,18 @@
 import uuid
 
+from datetime import date
+
 from pydantic import EmailStr
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
+
+class BaseVersion (SQLModel):
+    giorno: date = Field(index=True)
+    versione: str = Field(max_length=50)
+
+class Versions(BaseVersion, table=True):
+    __table_args__ = (UniqueConstraint("giorno"),)  # vincolo unico su giorno
+
+    id: int | None = Field(default=None, primary_key=True)
 
 
 # Shared properties
