@@ -9,21 +9,22 @@ from app.models import BaseVersion, Versions, Item, ItemCreate, ItemPublic, Item
 
 from datetime import date
 
-router = APIRouter(prefix="/days", tags=["days"])
+
+router = APIRouter(prefix="", tags=["days"])
 
 
 @router.get("/versions/{giorno}", response_model=BaseVersion)
 def read_version(session: SessionDep, giorno:date) -> Any:
-    """
-    Get item by ID.
-    """
-    version = session.exec(
-        select(Versions).where(Versions.giorno == giorno)
-    ).first()
-    if not version:
-        return BaseVersion(giorno=giorno, versione="0")
-
-    return version
+    try:
+        version = session.exec(
+            select(Versions).where(Versions.giorno == giorno)
+        ).first()
+        if not version:
+            return BaseVersion(giorno=giorno, versione="0")
+        return version
+    except Exception as e:
+        print(f"Errore in read_version: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
 @router.post("/", response_model=ItemPublic)
