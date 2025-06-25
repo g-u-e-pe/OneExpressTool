@@ -16,17 +16,15 @@ import io
 
 import logging
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+# ⚠️ Configura il logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
+    force=True  # ⚠️ Forza il reset della configurazione logger (nuovo in Python 3.8+)
+)
 
-# Aggiungi un handler se non è già presente
-if not logger.hasHandlers():
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '[%(asctime)s] %(levelname)s in %(module)s: %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+logger = logging.getLogger(__name__)
+logger.info("Logger configurato correttamente.")
 
 router = APIRouter(prefix="/versions", tags=["days"])
 
@@ -34,7 +32,8 @@ CODICI_VALIDI = {"2282"}
 
 @router.get("/{giorno}", response_model=BaseVersion)
 def read_version(session: SessionDep, giorno:date) -> Any:
-    logger.info("sonno qui con giorno %s", giorno)
+    logger.info("sonoqui")
+    print("ciao")
     try:
         version = session.exec(
             select(Versions).where(Versions.giorno == giorno)
@@ -49,7 +48,8 @@ def read_version(session: SessionDep, giorno:date) -> Any:
 
 
 @router.post("/create/{giorno}")
-async def upload_csv(session: SessionDep, giorno:date, file: UploadFile = File(...)):
+async def upload_csv(session: SessionDep, giorno:date, file: UploadFile = File(...)) ->Any:
+    #logger.info("sonno qui (in create) con giorno %s", giorno)
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Il file deve essere un CSV")
 
