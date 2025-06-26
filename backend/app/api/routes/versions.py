@@ -83,7 +83,19 @@ async def upload_csv(session: SessionDep, giorno: date, file: UploadFile = File(
         # Analisi struttura file
         reader = csv.DictReader(io.StringIO(decoded_content), delimiter=";")
         if not reader.fieldnames or "Codice committente" not in reader.fieldnames:
-            raise HTTPException(status_code=400, detail="Struttura file non valida: colonna 'Codice committente' mancante")
+            raise HTTPException(status_code=400,
+                                detail="Struttura file non valida: colonna 'Codice committente' mancante")
+
+        # Verifica che esista la colonna Importo totale
+        importo_col = None
+        for col in ["Importo totale", "Importo Totale", "IMPORTO TOTALE", "Totale"]:
+            if col in reader.fieldnames:
+                importo_col = col
+                break
+
+        if not importo_col:
+            raise HTTPException(status_code=400,
+                                detail="Struttura file non valida: colonna 'Importo totale' mancante")
 
         # Estrazione codici unici
         codici_file = {
@@ -96,7 +108,7 @@ async def upload_csv(session: SessionDep, giorno: date, file: UploadFile = File(
         if not codici_file:
             raise HTTPException(status_code=400, detail="Nessun codice committente trovato nel file")
 
-        # MODIFICA PRINCIPALE: Gestione corretta della clausola IN
+        # MODIFICA: Utilizza una lista di parametri invece di un singolo parametro per la lista
         if len(codici_file) == 1:
             # Caso speciale per un solo elemento
             codici_validi = {
@@ -108,28 +120,59 @@ async def upload_csv(session: SessionDep, giorno: date, file: UploadFile = File(
             }
         else:
             # Caso generale per più elementi
-            query = text("SELECT codice FROM clienti WHERE codice IN :codici").bindparams(
-                codici=tuple(codici_file)
-            )
+            # Creiamo una lista di parametri (:codice0, :codice1, ecc.)
+            params = {f"codice{i}": codice for i, codice in enumerate(codici_file)}
+            placeholders = ", ".join(f":codice{i}" for i in range(len(codici_file)))
+            query = text(f"SELECT codice FROM clienti WHERE codice IN ({placeholders})")
+
             codici_validi = {
                 str(codice[0]) for codice in
-                session.execute(query).fetchall()
+                session.execute(query, params).fetchall()
             }
 
-        # Filtraggio righe
+        # Filtraggio righe e calcolo totale
         output_stream = io.StringIO()
         writer = csv.DictWriter(output_stream, fieldnames=reader.fieldnames, delimiter=";")
         writer.writeheader()
 
         rows_processed = 0
+        totale = 0.0
+
+        # Prima passata: filtra le righe e calcola il totale
+        filtered_rows = []
         for row in csv.DictReader(io.StringIO(decoded_content), delimiter=";"):
             codice = str(row.get("Codice committente", "")).strip().upper()
             if codice and codice in codici_validi:
-                writer.writerow(row)
+                filtered_rows.append(row)
+                try:
+                    # Gestione più accurata dei formati numerici
+                    importo_str = row[importo_col].strip()
+                    # Rimuove eventuali simboli di valuta e spazi
+                    importo_str = importo_str.replace("€", "").replace(" ", "")
+                    # Sostituisce la virgola con il punto se presente
+                    if "," in importo_str:
+                        importo_str = importo_str.replace(".", "").replace(",", ".")
+                    # Converte in float
+                    importo = float(importo_str)
+                    totale += importo
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Importo non valido nella riga: {row} - Errore: {str(e)}")
+                    continue
                 rows_processed += 1
 
         if rows_processed == 0:
             raise HTTPException(status_code=400, detail="Nessun codice committente valido trovato")
+
+        # Seconda passata: scrive le righe filtrate
+        for row in filtered_rows:
+            writer.writerow(row)
+
+        # Aggiunge la riga del totale
+        total_row = {col: "" for col in reader.fieldnames}
+        # Formatta il totale con 2 decimali e virgola come separatore decimale
+        total_row[importo_col] = "{:,.2f}".format(totale).replace(",", "X").replace(".", ",").replace("X", ".")
+        total_row["Codice committente"] = "TOTALE"
+        writer.writerow(total_row)
 
         # Preparazione risposta
         output_stream.seek(0)
