@@ -1,5 +1,6 @@
 import uuid
 from typing import Any
+from sqlalchemy import text
 
 from fastapi import APIRouter, HTTPException, FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -65,79 +66,81 @@ def read_version(session: SessionDep, giorno:date) -> Any:
 
 @router.post("/create/{giorno}")
 async def upload_csv(session: SessionDep, giorno: date, file: UploadFile = File(...)) -> Any:
-    logger.info("Ricevuto file: %s per il giorno %s", file.filename, giorno)
+    logger.info("Inizio elaborazione file %s", file.filename)
 
     try:
+        # Verifica estensione file
         if not file.filename.lower().endswith(".csv"):
-            logger.error("File non CSV ricevuto: %s", file.filename)
-            raise HTTPException(status_code=400, detail="Il file deve essere un CSV")
+            raise HTTPException(status_code=400, detail="File non valido: richiesto formato CSV")
 
+        # Lettura e decodifica contenuto
         content = await file.read()
         try:
-            input_stream = io.StringIO(content.decode("utf-8"))
+            decoded_content = content.decode("utf-8")
         except UnicodeDecodeError:
-            logger.error("Errore di decoding UTF-8")
-            raise HTTPException(status_code=400, detail="Encoding file non supportato (usa UTF-8)")
+            raise HTTPException(status_code=400, detail="Encoding non supportato (richiesto UTF-8)")
 
-        # Prima leggi tutto il file per debug
-        input_stream_for_debug = io.StringIO(content.decode("utf-8"))
-        debug_reader = csv.DictReader(input_stream_for_debug, delimiter=";")
-        all_rows = list(debug_reader)
-        logger.debug("Tutte le righe: %s", all_rows)  # Debug completo
-        logger.debug("Numero totale righe: %d", len(all_rows))
+        # Analisi struttura file
+        reader = csv.DictReader(io.StringIO(decoded_content), delimiter=";")
+        if not reader.fieldnames or "Codice committente" not in reader.fieldnames:
+            raise HTTPException(status_code=400, detail="Struttura file non valida: colonna 'Codice committente' mancante")
 
-        # Poi crea un nuovo reader per il processing
-        input_stream_for_processing = io.StringIO(content.decode("utf-8"))
-        reader = csv.DictReader(input_stream_for_processing, delimiter=";")
-        fieldnames = reader.fieldnames or []
-        logger.debug("Colonne trovate: %s", fieldnames)
+        # Estrazione codici unici
+        codici_file = {
+            str(row.get("Codice committente", "")).strip().upper()
+            for row in csv.DictReader(io.StringIO(decoded_content), delimiter=";")
+            if str(row.get("Codice committente", "")).strip()
+        }
 
-        if "Codice committente" not in fieldnames:
-            logger.error("Colonna 'Codice committente' mancante")
-            raise HTTPException(status_code=400, detail="Colonna 'Codice committente' mancante")
+        # Verifica codici nel database
+        if not codici_file:
+            raise HTTPException(status_code=400, detail="Nessun codice committente trovato nel file")
 
+        # MODIFICA PRINCIPALE: Gestione corretta della clausola IN
+        if len(codici_file) == 1:
+            # Caso speciale per un solo elemento
+            codici_validi = {
+                str(codice[0]) for codice in
+                session.execute(
+                    text("SELECT codice FROM clienti WHERE codice = :codice"),
+                    {"codice": next(iter(codici_file))}
+                ).fetchall()
+            }
+        else:
+            # Caso generale per più elementi
+            query = text("SELECT codice FROM clienti WHERE codice IN :codici").bindparams(
+                codici=tuple(codici_file)
+            )
+            codici_validi = {
+                str(codice[0]) for codice in
+                session.execute(query).fetchall()
+            }
+
+        # Filtraggio righe
         output_stream = io.StringIO()
-        writer = csv.DictWriter(output_stream, fieldnames=fieldnames, delimiter=";")
+        writer = csv.DictWriter(output_stream, fieldnames=reader.fieldnames, delimiter=";")
         writer.writeheader()
 
         rows_processed = 0
-        codici_trovati = set()
-
-        for row in reader:
-            try:
-                codice = str(row.get("Codice committente", "")).strip().upper()
-                logger.debug(f"Processing row {reader.line_num}: Codice='{codice}'")
-
-                if not codice:
-                    logger.debug(f"Riga {reader.line_num} ignorata - codice vuoto")
-                    continue
-
-                if codice in CODICI_VALIDI:
-                    writer.writerow(row)
-                    rows_processed += 1
-                    codici_trovati.add(codice)
-                    logger.info(f"Riga accettata - Linea {reader.line_num}: Codice {codice}")
-                else:
-                    logger.debug(f"Riga {reader.line_num} ignorata - codice non valido: '{codice}'")
-
-            except Exception as e:
-                logger.error(f"Errore riga {reader.line_num}: {str(e)}")
-                continue
-
-        logger.info(f"Righe processate con successo: {rows_processed}")
-        logger.info(f"Codici unici trovati: {codici_trovati}")
+        for row in csv.DictReader(io.StringIO(decoded_content), delimiter=";"):
+            codice = str(row.get("Codice committente", "")).strip().upper()
+            if codice and codice in codici_validi:
+                writer.writerow(row)
+                rows_processed += 1
 
         if rows_processed == 0:
-            logger.warning("Nessuna riga valida trovata!")
+            raise HTTPException(status_code=400, detail="Nessun codice committente valido trovato")
 
+        # Preparazione risposta
         output_stream.seek(0)
         return StreamingResponse(
             output_stream,
             media_type="text/csv",
-            headers={
-                "Content-Disposition": f"attachment; filename=filtered_{file.filename}"
-            }
+            headers={"Content-Disposition": f"attachment; filename=filtered_{file.filename}"}
         )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Errore durante l'elaborazione del file")
-        raise HTTPException(status_code=500, detail="Errore interno del server")
+        logger.error("Errore durante l'elaborazione: %s", str(e))
+        raise HTTPException(status_code=500, detail="Errore interno durante l'elaborazione")
