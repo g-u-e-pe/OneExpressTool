@@ -15,6 +15,79 @@ class Versions(BaseVersion, table=True):
     id: int | None = Field(default=None, primary_key=True)
 
 
+class AziendaBase(SQLModel):
+    codice: str = Field(
+        primary_key=True,
+        max_length=10,
+        description="Codice univoco identificativo dell'azienda"
+    )
+    ragione_sociale: str = Field(
+        max_length=255,
+        description="Ragione sociale o nome dell'azienda"
+    )
+    nazione: str = Field(
+        max_length=100,
+        description="Nazione di residenza dell'azienda"
+    )
+    provincia: str = Field(
+        max_length=100,
+        description="Provincia di residenza dell'azienda"
+    )
+    citta: str = Field(
+        max_length=100,
+        description="Città di residenza dell'azienda"
+    )
+    via: str = Field(
+        max_length=255,
+        description="Indirizzo completo dell'azienda"
+    )
+    cap: str = Field(
+        max_length=20,
+        description="Codice di avviamento postale"
+    )
+    telefono: str | None = Field(
+        default=None,
+        max_length=30,
+        description="Numero di telefono dell'azienda"
+    )
+    codice_fiscale: str | None = Field(
+        default=None,
+        max_length=16,
+        description="Codice fiscale dell'azienda"
+    )
+    partita_iva: str | None = Field(
+        default=None,
+        max_length=11,
+        description="Partita IVA dell'azienda"
+    )
+
+
+class Azienda(AziendaBase, table=True):
+    pass
+
+
+# Modello per la creazione via API
+class AziendaCreate(AziendaBase):
+    pass
+
+
+# Modello per l'update via API (tutti i campi opzionali)
+class AziendaUpdate(SQLModel):
+    ragione_sociale: str | None = Field(default=None, max_length=255)
+    nazione: str | None = Field(default=None, max_length=100)
+    provincia: str | None = Field(default=None, max_length=100)
+    citta: str | None = Field(default=None, max_length=100)
+    via: str | None = Field(default=None, max_length=255)
+    cap: str | None = Field(default=None, max_length=20)
+    telefono: str | None = Field(default=None, max_length=30)
+    codice_fiscale: str | None = Field(default=None, max_length=16)
+    partita_iva: str | None = Field(default=None, max_length=11)
+
+
+# Modello per la risposta API (include l'ID)
+class AziendaPublic(AziendaBase):
+    id: uuid.UUID
+
 # Shared properties
 class UserBase(SQLModel):
     email: EmailStr = Field(unique=True, index=True, max_length=255)
